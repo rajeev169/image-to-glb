@@ -1,0 +1,90 @@
+name: Image to GLB
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: "Where to run TRELLIS"
+        type: choice
+        required: true
+        default: huggingface
+        options:
+          - huggingface
+          - kaggle
+          - colab
+      image:
+        description: "Path of the image in this repo"
+        required: true
+        default: "rider_white_bg.png"
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    env:
+      BACKEND: ${{ github.event.inputs.backend }}
+      IMAGE: ${{ github.event.inputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---------- Colab: GitHub can't start Colab, so give a one-tap link ----------
+      - name: Colab link
+        if: env.BACKEND == 'colab'
+        run: |
+          LINK="https://colab.research.google.com/github/${{ github.repository }}/blob/${{ github.ref_name }}/colab/Image_to_GLB.ipynb"
+          echo "Open this link, choose T4 GPU, then Runtime > Run all:"
+          echo "$LINK"
+          {
+            echo "## Run on Google Colab"
+            echo ""
+            echo "[Open Image_to_GLB in Colab]($LINK)"
+            echo ""
+            echo "1. Runtime > Change runtime type > **T4 GPU**"
+            echo "2. Runtime > **Run all**"
+            echo "3. The GLB downloads to your phone/PC at the end."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-python@v5
+        if: env.BACKEND != 'colab'
+        with:
+          python-version: "3.11"
+
+      # ---------- Hugging Face ----------
+      - name: Install (Hugging Face)
+        if: env.BACKEND == 'huggingface'
+        run: pip install -r requirements.txt
+
+      - name: Generate GLB (Hugging Face)
+        if: env.BACKEND == 'huggingface'
+        timeout-minutes: 45
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}   # free Hugging Face token, strongly recommended
+        run: python trellis_image_to_glb.py "$IMAGE" -o output/model.glb
+
+      # ---------- Kaggle ----------
+      - name: Install (Kaggle)
+        if: env.BACKEND == 'kaggle'
+        run: pip install "kaggle>=1.7.4"
+
+      - name: Generate GLB (Kaggle free T4 GPU)
+        if: env.BACKEND == 'kaggle'
+        timeout-minutes: 120
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        run: |
+          if [ -z "$KAGGLE_API_TOKEN" ]; then
+            echo "Add a repo secret named KAGGLE_API_TOKEN (Kaggle > Settings > API > Generate New Token)."
+            exit 1
+          fi
+          python tools/kaggle_run.py "$IMAGE" -o output/model.glb
+
+      # ---------- Result ----------
+      - uses: actions/upload-artifact@v4
+        if: always() && env.BACKEND != 'colab'
+        with:
+          name: model-glb
+          path: |
+            output/model.glb
+            output/input_used.png
+            output/kaggle_log.txt
+          if-no-files-found: warn
