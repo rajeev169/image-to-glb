@@ -133,6 +133,27 @@ def fix_glb_material(path: Path, metallic: float = 0.0, roughness: float = 0.85)
     path.write_bytes(out)
 
 
+def check_glb(path: Path) -> None:
+    """Reject obviously broken results, e.g. a flat sheet instead of a 3D object."""
+    data = path.read_bytes()
+    if data[:4] != b"glTF":
+        raise RuntimeError("result is not a GLB file")
+    jlen, jtype = struct.unpack("<I4s", data[12:20])
+    gltf = json.loads(data[20:20 + jlen])
+    mins, maxs = [], []
+    for mesh in gltf.get("meshes", []):
+        for prim in mesh.get("primitives", []):
+            acc = gltf["accessors"][prim["attributes"]["POSITION"]]
+            if "min" in acc and "max" in acc:
+                mins.append(acc["min"])
+                maxs.append(acc["max"])
+    if not mins:
+        raise RuntimeError("GLB has no mesh")
+    size = sorted(abs(hi - lo) for lo, hi in zip([min(c) for c in zip(*mins)], [max(c) for c in zip(*maxs)]))
+    if size[-1] <= 0 or size[0] / size[-1] < 0.05:
+        raise RuntimeError("result is a flat sheet, not a 3D object (the Space probably failed quietly)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Convert an image to a GLB with TRELLIS (Hugging Face Space).")
     ap.add_argument("image", help="input image (png/jpg). Plain background works best.")
@@ -173,6 +194,7 @@ def main() -> int:
                 client = connect(space)
                 glb = generate(client, args.image, args)
                 shutil.copy(glb, out)
+                check_glb(out)
                 if not args.no_fix_material:
                     fix_glb_material(out)
                 print(f"Done: {out} ({out.stat().st_size / 1e6:.1f} MB) from {space}")
