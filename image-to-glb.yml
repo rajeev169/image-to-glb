@@ -1,0 +1,27 @@
+name: Image to GLB
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Path of the image in this repo (e.g. input/rider.png)"
+        required: true
+        default: "input/rider.png"
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Generate GLB
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}   # optional, free HF account token
+        run: python trellis_image_to_glb.py "${{ github.event.inputs.image }}" -o output/model.glb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model-glb
+          path: output/model.glb
