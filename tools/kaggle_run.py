@@ -136,7 +136,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         kernel_id = build_kernel(Path(tmp), user, image, args)
         print(f"Starting Kaggle GPU job {kernel_id} ...")
-        resp = api.kernels_push(tmp)
+        resp = api.kernels_push(tmp, acc="NvidiaTeslaT4")
         err = getattr(resp, "error", None)
         if err:
             print(f"Kaggle refused the job: {err}")
@@ -162,6 +162,8 @@ def main() -> int:
         if "error" in st or "cancel" in st:
             print(f"Kaggle job failed. {msg}")
             print_log_tail(api, kernel_id, out.parent)
+            print("If it says 'No NVIDIA GPU': verify your phone at kaggle.com/settings, "
+                  "and check you still have GPU hours left this week.")
             return 2
         if time.time() - start > args.timeout_min * 60:
             print(f"Gave up after {args.timeout_min} minutes. The job may still finish on Kaggle: {kernel_id}")
