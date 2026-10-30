@@ -34,7 +34,7 @@ XFORMERS = ["xformers==0.0.27.post2", "--index-url", "https://download.pytorch.o
 BASIC = [
     "numpy<2", "pillow", "imageio", "imageio-ffmpeg", "tqdm", "easydict", "opencv-python-headless<4.11",
     "scipy", "ninja", "setuptools<70", "wheel", "rembg", "onnxruntime", "trimesh", "xatlas", "pyvista",
-    "pymeshfix", "igraph", "transformers<4.50", "huggingface_hub", "safetensors", "spconv-cu120",
+    "pymeshfix", "igraph", "plyfile", "open3d==0.18.0", "transformers<4.50", "huggingface_hub", "safetensors", "spconv-cu120",
     "git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8",
 ]
 
@@ -152,6 +152,13 @@ def install():
          "import torch, xformers, spconv, nvdiffrast.torch, diff_gaussian_rasterization, utils3d;"
          "assert torch.cuda.is_available(), 'CUDA not available';"
          "print('torch', torch.__version__, 'cuda ok')"])
+    # Import TRELLIS itself too, so a missing library shows up now and not after the long install.
+    test_env = dict(os.environ, ATTN_BACKEND="xformers", SPCONV_ALGO="native")
+    run([sys.executable, "-c",
+         f"import sys; sys.path.insert(0, {str(TRELLIS_DIR)!r}); "
+         "from trellis.pipelines import TrellisImageTo3DPipeline; "
+         "from trellis.utils import postprocessing_utils; print('trellis import ok')"],
+        env=test_env)
     DONE_FLAG.write_text("ok")
     print("Install finished.", flush=True)
 
