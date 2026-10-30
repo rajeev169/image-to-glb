@@ -96,6 +96,46 @@ def cuda_env(cap: str) -> dict:
     return env
 
 
+KAOLIN_TESTING = '''"""Tiny stand-in for kaolin.utils.testing.check_tensor (all TRELLIS uses from kaolin).
+Installing the full NVIDIA kaolin library just for this one check is slow and fragile."""
+
+
+def check_tensor(tensor, shape=None, dtype=None, device=None, throw=True):
+    def fail(msg):
+        if throw:
+            raise ValueError(msg)
+        return False
+    if shape is not None:
+        if len(shape) != tensor.ndim:
+            return fail(f"tensor has {tensor.ndim} dims, expected {len(shape)}")
+        for want, got in zip(shape, tensor.shape):
+            if want is not None and want != got:
+                return fail(f"tensor shape {tuple(tensor.shape)} != {tuple(shape)}")
+    if dtype is not None and dtype != tensor.dtype:
+        return fail(f"tensor dtype {tensor.dtype} != {dtype}")
+    if device is not None and str(device) != str(tensor.device):
+        return fail(f"tensor device {tensor.device} != {device}")
+    return True
+'''
+
+
+def install_kaolin_shim():
+    """Put a minimal `kaolin.utils.testing` into this Python, unless real kaolin is installed."""
+    try:
+        subprocess.run([sys.executable, "-c", "from kaolin.utils.testing import check_tensor"],
+                       check=True, capture_output=True)
+        return
+    except subprocess.CalledProcessError:
+        pass
+    import sysconfig
+    pkg = Path(sysconfig.get_paths()["purelib"]) / "kaolin"
+    (pkg / "utils").mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "utils" / "__init__.py").write_text("")
+    (pkg / "utils" / "testing.py").write_text(KAOLIN_TESTING)
+    print("Added small kaolin stand-in (check_tensor).", flush=True)
+
+
 def make_venv():
     """Create a Python 3.10 environment with uv (downloads its own Python if needed)."""
     if VENV_PY.exists():
@@ -131,7 +171,12 @@ def install():
 
     if not (TRELLIS_DIR / "trellis").exists():
         shutil.rmtree(TRELLIS_DIR, ignore_errors=True)
-        run(["git", "clone", "--depth", "1", "https://github.com/microsoft/TRELLIS.git", TRELLIS_DIR])
+        run(["git", "clone", "--depth", "1", "--recurse-submodules", "--shallow-submodules",
+             "https://github.com/microsoft/TRELLIS.git", TRELLIS_DIR])
+    # FlexiCubes lives in a git submodule; make sure it is really there.
+    if not (TRELLIS_DIR / "trellis/representations/mesh/flexicubes/flexicubes.py").exists():
+        run(["git", "-C", TRELLIS_DIR, "submodule", "update", "--init", "--depth", "1"])
+    install_kaolin_shim()
 
     EXT_DIR.mkdir(parents=True, exist_ok=True)
     print("Building GPU extensions (nvdiffrast, gaussian rasterizer)...", flush=True)
