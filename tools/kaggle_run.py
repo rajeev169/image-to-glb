@@ -52,19 +52,48 @@ def b64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode()
 
 
+MAX_SIDE = 768        # TRELLIS works at 518 px, so bigger images only make the job file heavy
+SMALL_ENOUGH = 300_000  # bytes; images this small are sent unchanged
+
+
+def shrink_image(image: Path, folder: Path) -> Path:
+    """The image travels inside the Kaggle job code as text, and Kaggle rejects big jobs
+    (400 Bad Request). Make a small copy: PNG if it has transparency, otherwise JPEG."""
+    if image.stat().st_size <= SMALL_ENOUGH:
+        return image
+    from PIL import Image
+    with Image.open(image) as im:
+        im.load()
+        has_alpha = im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info
+        im = im.convert("RGBA" if has_alpha else "RGB")
+        im.thumbnail((MAX_SIDE, MAX_SIDE), Image.LANCZOS)
+        if has_alpha:
+            out = folder / "input_small.png"
+            im.save(out, "PNG", optimize=True)
+        else:
+            out = folder / "input_small.jpg"
+            im.save(out, "JPEG", quality=92)
+    print(f"Image made smaller for Kaggle: {image.stat().st_size / 1e6:.1f} MB -> "
+          f"{out.stat().st_size / 1e6:.2f} MB ({im.size[0]}x{im.size[1]})")
+    return out
+
+
 def build_kernel(folder: Path, user: str, image: Path, args) -> str:
+    small = shrink_image(image, folder.parent)
+    image_name = "input" + small.suffix.lower()
     files = {
         "gpu/trellis_gpu.py": b64(ROOT / "gpu" / "trellis_gpu.py"),
         "glb_utils.py": b64(ROOT / "glb_utils.py"),
-        "input" + image.suffix.lower(): b64(image),
+        image_name: b64(small),
     }
     code = (KERNEL_TEMPLATE
             .replace("__FILES__", json.dumps(files))
-            .replace("__IMAGE_NAME__", json.dumps("input" + image.suffix.lower()))
+            .replace("__IMAGE_NAME__", json.dumps(image_name))
             .replace("__SEED__", str(args.seed))
             .replace("__TEXTURE__", str(args.texture))
             .replace("__SIMPLIFY__", str(args.simplify)))
     (folder / "run.py").write_text(code)
+    print(f"Kaggle job file size: {len(code) / 1e6:.2f} MB")
     kernel_id = f"{user}/{TITLE}"
     meta = {
         "id": kernel_id,
@@ -83,6 +112,23 @@ def build_kernel(folder: Path, user: str, image: Path, args) -> str:
     }
     (folder / "kernel-metadata.json").write_text(json.dumps(meta, indent=2))
     return kernel_id
+
+
+def kaggle_reason(err: Exception) -> str:
+    """Pull Kaggle's own error message out of an HTTP error (it hides behind '400 Bad Request')."""
+    resp = getattr(err, "response", None)
+    if resp is None:
+        return "(no details from Kaggle)"
+    try:
+        body = resp.json()
+        if isinstance(body, dict):
+            for key in ("message", "error", "errors", "detail"):
+                if body.get(key):
+                    return str(body[key])
+        return json.dumps(body)
+    except Exception:
+        text = (getattr(resp, "text", "") or "").strip()
+        return text[:2000] or "(empty reply from Kaggle)"
 
 
 def status_of(api, kernel_id: str):
@@ -133,10 +179,18 @@ def main() -> int:
         return 1
     print(f"Kaggle user: {user}")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        kernel_id = build_kernel(Path(tmp), user, image, args)
+    with tempfile.TemporaryDirectory() as tmp_root:
+        tmp = Path(tmp_root) / "kernel"   # only the job files go in here
+        tmp.mkdir()
+        kernel_id = build_kernel(tmp, user, image, args)
         print(f"Starting Kaggle GPU job {kernel_id} ...")
-        resp = api.kernels_push(tmp, acc="NvidiaTeslaT4")
+        try:
+            resp = api.kernels_push(str(tmp), acc="NvidiaTeslaT4")
+        except Exception as e:
+            print(f"Kaggle refused the job: {e}")
+            print(f"Kaggle's reason: {kaggle_reason(e)}")
+            print("Check: phone verified at kaggle.com/settings, GPU hours left this week.")
+            return 1
         err = getattr(resp, "error", None)
         if err:
             print(f"Kaggle refused the job: {err}")
