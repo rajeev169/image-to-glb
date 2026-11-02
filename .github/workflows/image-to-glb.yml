@@ -64,7 +64,7 @@ jobs:
       # ---------- Kaggle ----------
       - name: Install (Kaggle)
         if: env.BACKEND == 'kaggle'
-        run: pip install "kaggle>=1.7.4" pillow
+        run: pip install "kaggle>=2.2.5" pillow six
 
       - name: Generate GLB (Kaggle free T4 GPU)
         if: env.BACKEND == 'kaggle'
